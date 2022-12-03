@@ -1,0 +1,910 @@
+---
+title: "Possum_report"
+author: "Oksana Sidorenko, Tatyana Ziubko, Bogdan Sotnikov"
+date: '2022-11-15'
+output:
+  html_document:
+    toc: TRUE
+    theme:
+      bootswatch: flatly
+        
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## Исходные данные, цели и задачи
+Нашей задачей было построение модели для вычисления возраста опопссумов по их морфологическим данным. Исходя из литературного поиска, мы предполагаем, что используемый набор данных был получен группой австралийских ученых в октябре-ноябре 1993 года [1, 2].
+Для данного исследований были отловлены и измерены взрослые особи Trichosurus caninus, горного короткоухого поссума. 
+
+
+Статистическая обработка проводилась при помощи R (версия). 
+
+Загрузка необходимых пакетов производилась с помощью функции, обнаруживающей уже установленные пакеты и определяющей необходимость их загрузки:
+```{r, message=FALSE, warning=FALSE, results='hide'}
+package_installer <- function(package){
+  if (!require(package, character.only=T, quietly=T)) {
+    install.packages(package)
+    library(package, character.only=T)
+  }
+}
+lapply(c(library(ggplot2),
+         library(dplyr),
+         library(ggcorrplot),
+         library(psych),
+         library(stats),
+         library(car),
+         library(DAAG),
+         library(cowplot),
+         library(bslib),
+         library(gridExtra)), package_installer)
+
+```
+
+В R данные являются составной частью пакета DAAG. Данные содержат следующие переменные (site — одна из семи локаций отлова поссумов: Cambarville, Bellbird, Whian Whian, Byrangery, Conondale, Allyn River и Bulburin соответственно;
+Pop -- одна из трех популяций поссумов: Victoria, New South Wales и Queensland;
+sex — факторная переменная с уровнями f - самки, m - самцы;
+age — возраст;
+hdlngth — длина головы;
+skull — ширина черепа;
+totlngth — общая длина;
+taill — длина хвоста;
+footlgth — длина стопы;
+earconch — длина ушной раковины;
+eye — расстояние от медиального угла глазной щели до латерального угла глазной щели правого глаза;
+chest — обхват груди (в см);
+belly — обхват живота (в см).
+
+Были произведены перекодировка факторных переменных и удаление переменной "Pop" (по требованию заказчика).
+```{r}
+possum <- DAAG::possum[-3]
+possum$sex <- factor(possum$sex, levels = c("m", "f"), labels = c("male", 
+                                                                  "female"))
+
+possum$site <- factor(possum$site, levels = 1:7, labels = c("Cambarville", 
+                                                              "Bellbird", 
+                                                              "Whian Whian", 
+                                                              "Byrangery", 
+                                                              "Conondale", 
+                                                              "Allyn River", 
+                                                              "Bulburin"))
+```
+
+
+
+## Разведочный анализ данных
+
+
+### Обзорный анализ
+
+Краткая сводка по данным:
+```{r}
+str(possum)
+summary(possum)
+```
+Для удобства дальнейшей работы с данными числовые переменные были выделены в отдельный сабсет.
+```{r}
+possum_numerical <- possum[4:13]
+```
+
+Подсчет числа NA:
+```{r}
+NA_count <- sum(is.na(possum))
+```
+
+
+NA - 3 наблюдения из 104 - менее 3%, они могут быть удалены:
+```{r}
+possum <- na.omit(na.omit(possum))
+possum_numerical <- na.omit(na.omit(possum_numerical))
+```
+
+
+
+### Проверка на нормальность распределения данных
+
+Проверка на нормальность распределения данных необходима, чтобы оценить круг методов, которые могут применять при дальнейшем анализе данных. При несоблюдении условия нормальности как по формальным критериям (тесты Шапиро-Уилка и Колмогорова-Смирнова), так и по визуальным характеристикам распределения (график плотности и квантиль-квантильный график) используются непараметрические статистические критерии. Они уступают по мощности параметрическим критериям, однако последние применимы только при нормальности распределения.
+
+
+#### Построение графиков плотности
+
+
+```{r}
+density <- apply(possum_numerical, 2, function(a) ggplot(possum_numerical, aes(x=a))+
+  geom_density())
+```
+> График плотности для интересующей переменной вызывается при помощи команды `density$<variable>`, где `<variable>` -- имя переменной. Пример - `density$footlgth`. Дополнительную кастомизацию можно провести, работая, как с обычной переменной, хранящей график ggplot.
+
+```{r, echo=FALSE, warning=FALSE}
+density$age+
+  xlab(label = "age")
+```
+
+График плотности для возраста поссумов.
+Распределение скошено влево, не является нормальным.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$hdlngth+
+  xlab(label = "hdlngth")
+```
+
+График плотности для длины головы поссумов.
+Распределение близко к нормальному. Имеется небольшой субпик в левой части графика.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$skullw+
+  xlab(label = "skullw")
+```
+
+График плотности для ширины черепа поссумов.
+Распределение скошено влево, в правой части графика имеется небольшой субпик.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$totlngth+
+  xlab(label = "totlngth")
+```
+
+График плотности для длины тела поссумов. Распределение близко к нормальному, с несколько скошенной в правую сторону вершиной.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$taill+
+  xlab(label = "taill")
+```
+
+График плотности для длины хвоста поссумов.
+Распределение близко к нормальному, несколько бимодально.
+
+
+
+
+```{r echo=FALSE, warning=FALSE}
+density$footlgth+
+  xlab(label = "footlgth")
+```
+
+График плотности для длины стоп поссумов. Распределение бимодально.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$earconch+
+  xlab(label = "earconch")
+```
+
+График плотности для длины ушной раковины поссумов. Распределение бимодально.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$eye+
+  xlab(label = "eye")
+```
+
+График плотности для ширины глазной щели поссумов. Распределение близко к нормальному.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$chest+
+  xlab(label = "chest")
+```
+
+График плотности для обхвата груди поссумов. Распределение близко к нормальному, вершина несколько скошено.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+density$belly+
+  xlab(label = "belly")
+```
+
+График плотности для обхвата живота поссумов. Распределение близко к нормальному.
+
+
+
+
+### Построение квантиль-квантильных графиков
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots <- apply(possum_numerical, 2, function(a) ggplot(possum_numerical, aes(sample=a))+
+        stat_qq()+
+          stat_qq_line())
+```
+
+
+> Квантиль-квантильный график для интересующей переменной вызывается при помощи команды `qqplots$<variable>`, где `<variable>` -- имя переменной. Пример - `qqplots$earconch`. Дополнительную кастомизацию можно провести, работая, как с обычной переменной, хранящей график ggplot.
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$age+
+  xlab(label = "normal quantiles")+
+  ylab(label = "age")
+```
+
+Квантиль-квантильный график для возраста поссумов. Квантили указывают на распределение, отличающиеся от нормального.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$hdlngth+
+  xlab(label = "normal quantiles")+
+  ylab(label = "hdlngth")
+```
+
+Квантиль-квантильный график для длины головы поссумов. Квантили распределены нормально.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$skullw+
+  xlab(label = "normal quantiles")+
+  ylab(label = "skullw")
+```
+
+Квантиль-квантильный график для ширины головы поссумов. Распределение квантилей отличается от нормального.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$totlngth+
+  xlab(label = "normal quantiles")+
+  ylab(label = "totlngth")
+```
+
+Квантиль-квантильный график для длины тела поссумов. Распределение квантилей близко к нормальному.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$taill+
+  xlab(label = "normal quantiles")+
+  ylab(label = "taill")
+```
+
+Квантиль-квантильный график для длины хвоста поссумов. Распределние квантилей визуально несколько отличается от нормального.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$footlgth+
+  xlab(label = "normal quantiles")+
+  ylab(label = "footlgth")
+```
+
+Квантиль-квантильный график для длины стоп поссумов. Распределение квантилей отличается от нормального.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$earconch+
+  xlab(label = "normal quantiles")+
+  ylab(label = "earconch")
+```
+
+Квантиль-квантильный график для длины ушной раковины поссумов. Распределение квантилей отличается от нормального.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$eye+
+  xlab(label = "normal quantiles")+
+  ylab(label = "eye")
+```
+
+Квантиль-квантильный график для ширины глазничной щели поссумов. Распределение квантилей близко к нормальному.
+
+
+
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$chest+
+  xlab(label = "normal quantiles")+
+  ylab(label = "chest")
+```
+
+Квантиль-квантильный график для обхвата груди поссумов. Распределение квантилей близко к нормальному.
+ 
+ 
+ 
+
+```{r, echo=FALSE, warning=FALSE}
+qqplots$belly+
+  xlab(label = "normal quantiles")+
+  ylab(label = "belly")
+```
+
+Квантиль-квантильный график для обхвата живота поссумов. Распределение квантилей близко к нормальному.
+
+
+
+
+### Формальные тесты
+
+Следующим шагом проверки на нормальность стало использование теста Шапиро-Уилка для указанных данных.
+
+```{r}
+normality <- sapply(possum_numerical, function(a) shapiro.test(a))
+normality
+```
+
+По результатам анализа графиков и теста Шапиро-Уилка можно сделать вывод, что длина головы, общая длина, длина хвоста, ширина глазной щели, обхват груди и обхват живота распределены нормально (p-value теста Шапиро-Уилка больше 0.05, графики плотности и квантилей близки к нормальным), а возраст, ширина черепа, длина стоп и длина ушной раковины - ненормально.
+
+
+### Работа с выбросами
+
+
+Боксплоты по количественным переменным:
+```{r}
+boxplot(possum$age, possum$hdlngth, possum$skullw, possum$totlngth, 
+        possum$taill, possum$footlgth, possum$earconch, possum$eye,
+        possum$chest, possum$belly,
+        names = c('age',
+                  'hdlngth', 
+                  'skullw', 
+                  'totlngth',
+                  'taill', 
+                  'footlgth', 
+                  'earconch', 
+                  'eye', 
+                  'chest', 
+                  'belly'))
+```
+
+В переменных hdlngth, skullw, taill, eye, chest, belly отмечены выбросы в количестве, не допускающем их удаление. Далее можно проанализировать их и сделать предположения о биологическом смысле некоторых из них.
+
+
+### Корреляционный анализ
+
+Чтобы при подборе модели избежать возможных проблем с коллинеарностью, был проведен корреляционный анализ данных. Была составлена матрица корреляций всех колчиественных переменных. Корреляции с p-value меньше 0.05 не считались статистически значимыми и помечались на графике крестом. Поправка на множественные сравнения не проводилась, так как результаты анализа влияли лишь на ужесточение требование к модели, а не на непосредственные выдвижение и проверку гипотез. 
+
+```{r}
+pleiades_mat <- corr.test(possum_numerical)
+temperature_plot <- ggcorrplot(pleiades_mat$r, type = "lower", outline.col = "white", lab=TRUE, method = "circle", p.mat = pleiades_mat$p)
+temperature_plot
+```
+
+Мы наблюдали сильную положительную связь между длиной и шириной черепа, а также между длиной стоп и ушных раковин.
+Мы обнаружили положительную связь средней силы между обхватом поясницы и обхватом груди, обхватом поясницы и общей длиной тела, обхватом поясницы и длиной головы, обхватом груди и длиной тела, обхватом груди и шириной черепа, обхватом груди и высотой черепа, общей длиной тела и высотой черепа.
+Мы обнаружили умеренную отрицательную связь между длиной хвоста и длиной ушной раковины.
+Также мы наблюдали умеренную положительную связь между обхватом поясницы и длиной стоп, обхватом пояницы и шириной черепа, обхватом поясницы и возрастом, обхватом груди и длиной стоп, обхватом груди и возрастом, шириной глазной щели и шириной черепа, шириной глазной щели и длиной головы, длиной стоп и общей длиной тела, длиной стоп и длиной головы, возрастом и длиной головы.
+
+Большинство указанных корреляций было ожидаемо по биологическим причинам (пропорцианольность строения тела и его отдельных частей). Наше внимание привлекла корреляция между длиной ушной раковины и длиной стоп.
+
+
+### Попарные диаграммы рассеивания
+
+Для дальнейшего анализа были построены попарные диаграммы рассеивания. На тех из них, которые содержали переменные footlhth и earconch обнаруживались два кластера. Цвет точек в первом наборе диаграмм обозначал пол, во втором - локацию поссума.
+
+```{r}
+deviant_apply_sex <- apply(possum_numerical, 2, function(b) apply(possum_numerical, 2, function(a) ggplot(possum)+
+        geom_point(aes(x=a, y=b, col=sex))))
+
+deviant_apply_site <- apply(possum_numerical, 2, function(b) apply(possum_numerical, 2, function(a) ggplot(possum)+
+        geom_point(aes(x=a, y=b, col=site))))
+```
+
+> Диаграмма рассеивания для интересующих переменных вызывается при помощи команды `density$<variable_y>$<variable_x>`, где `<variable_y>` -- имя переменной, которая будет располагаться по оси ординат, а `<variable_x>` -- имя переменной, которая будет располагаться по оси абсцисс. Пример - `density$footlgth`. Дополнительную кастомизацию можно провести, работая, как с обычной переменной, хранящей график ggplot.
+
+Для экономии места приведена будет наиболее показательная диаграмма рассеивания между переменными footlhth и earconch, с указанием локации измерения поссума.
+
+```{r, echo=FALSE, warning=FALSE}
+deviant_apply_site$footlgth$earconch+
+  xlab(label = "earconch")+
+  ylab(label = "footlgth")
+```
+
+Заметно, что поссумы с более длинными стопами и ушными раковинами принадлежат к популяции, обитающей в первом и втором локусе, а с более маленькими -- в остальных пяти. Таким образом, можно предположить, что мы имеем дело с двумя подвидами поссумов, отличающихся по морфометрическим характеристикам и ареалам обитания.
+
+
+### Анализ распределения внутри подгрупп
+
+Для более подного разведочного анализа было решено оценить распределения переменных при разбиении их на подгруппы по полу и локации.
+
+```{r}
+possum$locus <- factor(ifelse(possum$site %in% c("Cambarville", "Bellbird"), "First_locus", "Second_locus"))
+possum_numerical$locus <- possum$locus
+```
+Добавленная переменная соответствует гипотетическим подвидам, обитающим в одном из двух локусов.
+
+
+#### Распределение морфометрических данных у поссумов различных полов
+
+```{r, echo=FALSE, warning=FALSE}
+plot_age <- ggplot(possum, aes(age, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='age', y='density')
+legend <- get_legend(plot_age  + theme(legend.position = "right"))
+plot_age
+```
+
+Распределения асимметричны, скошены влево.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_hdlngth <- ggplot(possum, aes(hdlngth, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='head length', y='density')
+legend <- get_legend(plot_hdlngth  + theme(legend.position = "right"))
+plot_hdlngth
+```
+
+Распределения в целом выглядят как нормальные
+```{r, echo=FALSE, warning=FALSE}
+plot_skullw <- ggplot(possum, aes(skullw, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='skull width', y='density')
+legend <- get_legend(plot_skullw  + theme(legend.position = "right"))
+plot_skullw
+```
+
+Заметная ассимметрия (скошены влево)
+```{r, echo=FALSE, warning=FALSE}
+plot_totlngth <- ggplot(possum, aes(totlngth, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='total length', y='density')
+legend <- get_legend(plot_totlngth+ theme(legend.position = "right"))
+plot_totlngth
+```
+
+Распределение немного скошено вправо в случае самок, имеется два пика у самцов
+```{r, echo=FALSE, warning=FALSE}
+plot_taill <- ggplot(possum, aes(taill, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='tail length', y='density')
+legend <- get_legend(plot_taill+ theme(legend.position = "right"))
+plot_taill
+```
+
+Распределения не очень симметричны, в целом выглядят как нормальные
+```{r, echo=FALSE, warning=FALSE}
+plot_footlgth <- ggplot(possum, aes(footlgth, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='foot length', y='density')
+legend <- get_legend(plot_footlgth+ theme(legend.position = "right"))
+plot_footlgth
+```
+
+Распределения сильно отличаются от нормальных: имеют по два пика,
+форму, сильно отличную от нормального распределения
+```{r, echo=FALSE, warning=FALSE}
+plot_earconch <- ggplot(possum, aes(earconch, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='ear conch length', y='density')
+legend <- get_legend(plot_earconch+ theme(legend.position = "right"))
+plot_earconch
+```
+
+Распределения сильно отличаются от нормальных: имеют по два пика,
+форму, сильно отличную от нормального распределения
+```{r, echo=FALSE, warning=FALSE}
+plot_eye <- ggplot(possum, aes(eye, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='distance from medial canthus to lateral canthus of right eye', y='density')
+legend <- get_legend(plot_eye+ theme(legend.position = "right"))
+plot_eye
+```
+
+Распределения не очень симметричны, в целом выглядят как нормальные
+```{r, echo=FALSE, warning=FALSE}
+plot_chest <- ggplot(possum, aes(chest, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='chest girth (in cm)', y='density')
+legend <- get_legend(plot_chest+ theme(legend.position = "right"))
+plot_chest
+```
+
+У распределений немного искажена форма, в целом выглядят 
+приближенно к нормальным
+```{r, echo=FALSE, warning=FALSE}
+plot_belly <- ggplot(possum, aes(belly, fill=sex))+
+  geom_density(alpha=0.5)+
+  labs(x='belly girth (in cm)', y='density')
+legend <- get_legend(plot_belly+ theme(legend.position = "right"))
+plot_belly
+```
+
+Распределения близки к нормальным. У поссумов женского пола имеется малый пик в правой части графика. Было высказано предположение о том, что это беременные самки.
+
+
+#### Распределение морфометрических данных у поссумов предполагаемых подвидов
+
+
+```{r, echo=FALSE, warning=FALSE}
+plot_age_l <- ggplot(possum, aes(age, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='age', y='density')
+legend <- get_legend(plot_age_l  + theme(legend.position = "right"))
+plot_age_l
+```
+
+Распределения скошены влево.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_hdlngth_l <- ggplot(possum, aes(hdlngth, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='head length', y='density')
+legend <- get_legend(plot_hdlngth_l  + theme(legend.position = "right"))
+plot_hdlngth_l
+```
+
+Распределения в целом выглядят как нормальные
+```{r, echo=FALSE, warning=FALSE}
+plot_skullw_l <- ggplot(possum, aes(skullw, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='skull width', y='density')
+legend <- get_legend(plot_skullw_l  + theme(legend.position = "right"))
+plot_skullw_l
+```
+Распределения близки к нормальным.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_totlngth_l <- ggplot(possum, aes(totlngth, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='total length', y='density')
+legend <- get_legend(plot_totlngth_l + theme(legend.position = "right"))
+plot_totlngth_l
+```
+
+Распределение у поссумов из второго локуса близко к нормальному, у поссумов первого локуса несколько скошено вправо.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_taill_l <- ggplot(possum, aes(taill, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='tail length', y='density')
+legend <- get_legend(plot_taill_l+ theme(legend.position = "right"))
+plot_taill_l
+```
+Распределения нормальны, заметно различие между двумя популяциями.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_footlgth_l <- ggplot(possum, aes(footlgth, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='foot length', y='density')
+legend <- get_legend(plot_footlgth_l+ theme(legend.position = "right"))
+plot_footlgth_l
+```
+
+Распределения нормальны, заметно различие между двумя популяциями.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_earconch_l <- ggplot(possum, aes(earconch, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='ear conch length', y='density')
+legend <- get_legend(plot_earconch_l + theme(legend.position = "right"))
+plot_earconch_l
+```
+
+Распределения нормальны, заметно различие между двумя популяциями.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_eye_l <- ggplot(possum, aes(eye, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='distance from medial canthus to lateral canthus of right eye', y='density')
+legend <- get_legend(plot_eye_l + theme(legend.position = "right"))
+plot_eye_l
+```
+
+Распределение в первому локусе близко к нормальному, во втором имеет утолщенный хвост справа.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_chest_l <- ggplot(possum, aes(chest, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='chest girth (in cm)', y='density')
+legend <- get_legend(plot_chest_l + theme(legend.position = "right"))
+plot_chest_l
+```
+
+Распределения асимметричны.
+
+```{r, echo=FALSE, warning=FALSE}
+plot_belly_l <- ggplot(possum, aes(belly, fill=locus))+
+  geom_density(alpha=0.5)+
+  labs(x='belly girth (in cm)', y='density')
+legend <- get_legend(plot_belly_l+ theme(legend.position = "right"))
+plot_belly_l
+```
+
+Распределение в первом локусе близко к нормальному, во втором имеет утолщенные хвосты.
+
+### Результаты EDA 
+
+При статистическом анализе морфологических данных мы обнаружили выраженное бимодальное распределение по некоторым показателям (размер ушной раковины, стопы и длина хвоста). 
+Для объяснения данной гетерогенности популяции был проведен литературный поиск, который выявил, что спустя 9 лет после сбора исследуемых данных о Trichosurus caninus, в 2002 году, было предложено разделить этот вид на северный (сохранил название Trichosurus caninus) и южный (T. cunninghami) подвиды, вследствие существенных морфологических отличий (при этом генетических оснований для разделения на отдельные виды оказалось недостаточно)[2]. То есть, данные о горном короткоухом поссуме, собранные до 2002 года, объединяют в себе сведения о двух морфологически отличных подвидах. 
+
+На рисунке 1 продемонстрированы морфологические различия этих двух видов [2]. Согласно данным австралийских коллег, у южных популяций: 
+– более крупная ушная раковина, 
+– значительно (P < 0,001) более длинная стопа и 
+– значительно (P < 0,001) более короткий хвост, чем у особей из северных популяций.
+ Животных можно четко различить с помощью индекса, основанного на этих трех морфологических показателях. Эти данные полностью согласуются с результатами нашего исследования.
+
+Кроме того разброс значений по некоторым показателям может быть вызван примесью особей кистехвостых поссумов (Trichosurus vulpecula), поскольку они имеют схожую морфологию и пересечение ареала обитания с Trichosurus caninus. 
+
+
+![Рисунок 1. Ключевые различия в морфологии T. cuninghami и  T. caninus (по D. B. Lindenmayer et al.)](./photo_2022-11-17_07-14-18.jpg)
+
+
+Нами также была обнаружена незначительная бимодальность в распределении величины обхвата живота: 4 наблюдения образуют вторую моду в области больших значений. Учитывая, что эти данные описывают женские особи (среди мужских особей второй моды у данного распределения не обнаружено), мы предположили, что они относятся к беременным / вынашивающим самкам. Отсутствие больших значений по этому показателю среди юных самок также согласуется с данными о возрасте половой зрелости, который наступает на третьем году жизни. 
+
+Анализ литературных данных о беременности горных поссумов показал, что внутриутробная беременность Trichosurus caninus длится чуть больше двух недель и приводит к рождению недоношенного плода очень малого размера, что вероятно, если и приводит, то к незначительному увеличению живота.
+ 
+После рождения детёныш перебирается в сумку матери, где безвылазно проводит следующие 175–200 дней. 
+Поскольку детёныш на протяжении этого срока является неотъёмным от матери, замеры живота кормящих самок либо а) проводятся с учётом младенца, либо б) отбрасываются (если дизайн эксперимента позволяет отобрать особи среди некормящих самок).
+
+На следующем этапе вскармливания младенец больше времени проводит на спине у матери, но при этом продолжает посещать сумку до полного отъёма от груди в возрасте от 240 до 270 дней. То есть животы самок и на этом сроке выкармливания могут быть существенно увеличены за счет детеныша
+
+Участвовали ли кормящие самки в данном исследовании не уточняется, однако, согласно данным другого исследования (проводившегося в тот же год в тех же регионах), доля вынашивающих самок в популяции составляла около 88% в летний период и 60% к концу осени (Таблица 1, [3]). 
+
+Учитывая такой высокий процент среди женской популяции, разумно предположить, что кормящие самки не были отброшены при проведении замеров. Однако вторая мода в распределении величины живота образована намного меньшей долей замеров, что не согласуется с ожидаемым высоким процентом вынашивающих самок, и может быть вызвана другими обстоятельствами: наличием нескольких детенышей в либо вариабельностью их размеров.
+
+
+
+Таблица 1. Доля самок с детенышами (по Viggers K.L. с изменениями)
+
+|Апрель|Июнь|Август|Ноябрь|
+|:------:|:------:|:------:|:------:|
+| 0.25(2/8) | 0.88 (7/8) | 0.88 (7/8) | 0.60 (6/10) |
+
+
+
+Средняя продолжительности жизни у обоих подвидов Trichosurus caninus составляет 8-12 лет, при этом встречаются особи возрастом 17 лет [1]. Поссумы этого вида считаются долгожителями среди сородичей (к примеру, упомянутый выше кистехвостый Trichosurus vulpecula живёт в среднем 7-10 лет). 
+Однако в представленных данных медианный возраст особи составил всего 3 года, а максимальный – 9 лет. 
+
+Поскольку сбор данных производился путём отлова животных в естественной среде обитания (а не в контролируемом непрерывном наблюдении), их возраст доподлинно неизвестен и был оценен косвенным способом -- по степени стираемости зубов. В отличие от других измерений, полученных прямым способом (замеры частей тела).
+
+При таком методе оценки может возникать дополнительная погрешность, вызванная травмами челюсти или генетическими дефектами эмали или пищеварения и др. Это может негативно сказаться на построении предсказательной модели.
+
+
+## Подбор модели
+
+### Простая линейная модель
+
+Модели по одному предиктору:
+```{r}
+mod <- lm(age~hdlngth, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~skullw, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~totlngth, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~taill, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~footlgth, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~earconch, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~eye, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~chest, data=possum)
+summary(mod)
+```
+```{r}
+mod <- lm(age~belly, data=possum)
+summary(mod)
+```
+В качестве единственных предикторов значимо предсказывают возраст переменные chest (\*\*\*), belly (\*\*\*), hdlngth (\*\*\*), skullw (\*\*), totlngth (\*\*), eye (\*).
+
+Предсказательная сила простых линейных моделей оказалсь неудовлетворительной, поэтому была предпринята попытка построить множественную линейную модель для предсказания возраст поссумов.
+
+### Множественная линейная модель
+
+> Стандартизируем модель, чтобы получить информацию о том, какие из возможных предикторов оказывают наиболшее влияние на полную модель.
+
+```{r}
+possum_scale <- as.data.frame(sapply(possum_numerical[-11], scale))
+mod_scale <- lm(age ~ ., data = possum_scale)
+summary(mod_scale)
+```
+Заметно, что сильнее всего на модель влияют belly, earconch и footlgth.
+
+
+
+
+> Удаляем коллинеарные факторы посредством функции вздутия модели.
+
+```{r}
+multiple_mod1 <- lm(age ~., data=possum_numerical[-11])
+summary(multiple_mod1)
+vif(multiple_mod1)
+multiple_mod2 <- update(multiple_mod1, .~. - footlgth)
+vif(multiple_mod2)
+multiple_mod3 <- update(multiple_mod2, .~. - totlngth)
+vif(multiple_mod3)
+multiple_mod4 <- update(multiple_mod3, .~. - hdlngth)
+vif(multiple_mod4)
+multiple_mod5 <- update(multiple_mod4, .~. - chest)
+vif(multiple_mod5)
+summary(multiple_mod5)
+```
+После этого шага имеем модель: **age = -11.64 + 0.076 * skullw + 0.003 * taill + 0.024 * earconch + 0.259 * eye + 0.183 * belly**
+
+> Убираем невлияющие предикторы, которые не оказывают значимого влияния на модель.
+
+
+```{r}
+drop1(multiple_mod5, test = "F")
+multiple_mod6 <- update(multiple_mod5, .~. - taill)
+drop1(multiple_mod6, test = "F")
+multiple_mod7 <- update(multiple_mod6, .~. - earconch)
+drop1(multiple_mod7, test = "F")
+multiple_mod8 <- update(multiple_mod7, .~. - skullw)
+drop1(multiple_mod8, test = "F")
+summary(multiple_mod8)
+```
+
+На данном шаге имеем модель **age = 7.76642 + 0.27726 * eye + 0.22720 * belly**
+
+Предсказательная сила модели неудовлетворительная. Дальнейшие шаги проделаны исключительно в учебных целях.
+
+## Оценка качества модели
+
+> Строим график остатков модели
+
+
+```{r}
+multiple_mod8_diag <- data.frame(fortify(multiple_mod8), possum_numerical[, c(2:7, 9)])
+
+gg_resid <- ggplot(data = multiple_mod8_diag, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+gg_resid
+```
+
+> С моделью не все в порядке. Имеется два наблюдения за пределами 2 стандартных отклонений (влиятельные наблюдения). Ряд измерений в центральной части производят впечатление гетероскедастичности.
+
+
+> Строим график расстояний Кука
+
+```{r}
+cook_model <- ggplot(multiple_mod8_diag, aes(x = 1:nrow(multiple_mod8_diag), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red")
+cook_model
+```
+
+> График расстояний Кука выглядит приемлемо.
+
+> Проверяем нормальность распределения
+
+```{r}
+quantile_model <- qqPlot(multiple_mod8_diag$.stdresid)
+quantile_model
+```
+
+> Квантильный график выглядит не критично.
+
+
+```{r}
+res_1 <- gg_resid + aes(x = chest)
+res_2 <- gg_resid + aes(x = earconch)
+res_3 <- gg_resid + aes(x = taill)
+res_4 <- gg_resid + aes(x = totlngth)
+res_5 <- gg_resid + aes(x = footlgth)
+res_6 <- gg_resid + aes(x = hdlngth)
+res_7 <- gg_resid + aes(x = skullw)
+
+grid.arrange(res_1, res_2, res_3, res_4, res_5, res_6, res_7, nrow = 2)
+```
+
+> Несмотря на коллинеарность, возвращаем в модель chest, поскольку наблюдаем явную неучтенную зависимость.
+
+```{r}
+summary(multiple_mod8)
+multiple_mod9 <- update(multiple_mod8, .~. + chest)
+summary(multiple_mod9)
+```
+
+> Несмотря на снижение значимость отдельных предикторов, общий R-квадрат несколько возрастает.
+
+
+> Строим график остатков для новой модели
+
+
+```{r}
+multiple_mod9_diag <- data.frame(fortify(multiple_mod9), possum_numerical[, c(2:6, 9)])
+
+gg_resid2 <- ggplot(data = multiple_mod9_diag, aes(x = .fitted, y = .stdresid)) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) +
+  geom_smooth(method = "lm") +
+  geom_hline(yintercept = 2, color = "red") +
+  geom_hline(yintercept = -2, color = "red")
+gg_resid2
+```
+
+> Распределение остатков стало еще хуже. За границей двух стандартных отклонений стало больше влиятельных наблюдений, а паттерн стал еще более воронкообразным.
+
+
+> Строим график Кука для новой модели
+
+```{r}
+cook_model <- ggplot(multiple_mod9_diag, aes(x = 1:nrow(multiple_mod9_diag), y = .cooksd)) + 
+  geom_bar(stat = "identity") + 
+  geom_hline(yintercept = 2, color = "red")
+cook_model
+```
+
+> График расстояний Кука выглядит приемлемо.
+
+> Строим квантильный график для новой модели.
+
+```{r}
+quantile_model <- qqPlot(multiple_mod9_diag$.stdresid)
+quantile_model
+```
+
+> Квантильный график выглядит некритично.
+
+
+Низкая предсказательная сила (скорректированный R-квадрат на уровне 0.15) и неудовлетворительное распределение остатков делают модель, по нашему мнению, непригодной для использования. Нижеследующий раздел (предсказания модели) выполянется в учебных целях, чтобы продемонстрировать, какой подход мы бы применяли, если бы модель была пригодна для дальнейшей работы.
+
+
+
+## Предсказания модели
+
+
+```{r}
+MyData <- data.frame(
+  belly = seq(min(possum_numerical$belly), max(possum_numerical$belly), length.out = 100),
+  chest = mean(possum_numerical$chest),
+  eye = mean(possum_numerical$eye))
+
+Predictions <- predict(multiple_mod9, newdata = MyData,  interval = 'confidence')
+MyData <- data.frame(MyData, Predictions)
+
+Pl_predict <- ggplot(MyData, aes(x = belly, y = fit)) +
+  geom_ribbon(alpha = 0.2, aes(ymin = lwr, ymax = upr)) +
+  geom_line() + 
+  ggtitle("Множественная модель")
+Pl_predict
+```
+
+## Список использованной литературы
+
+[1] Lindenmayer, D. B., Viggers, K. L., Cunningham, R. B., and Donnelly, C. F. (1995). Morphological variation among populations of the mountain brushtail possum, Trichosurus caninus Ogilby (Phalangeridae, Marsupialia). Australian Journal of Zoology 43, 449–458.
+
+[2] Lindenmayer, D. B., Dubach, J., and Viggers, K. L. (2002). Geographic dimorphism in the mountain brushtail possum (Trichosurus caninus): the case for a new species Australian Journal of Zoology 50, 369–393.
+
+[3] Viggers KL, Lindenmayer DB, Cunningham RB, Donnelly CF. The effects of parasites on a wild population of the Mountain Brushtail Possum (Trichosurus caninus) in south-eastern Australia. Int J Parasitol. 1998 May;28(5):747-55. doi: 10.1016/s0020-7519(98)00022-8. PMID: 9650054.
